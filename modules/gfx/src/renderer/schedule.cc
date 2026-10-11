@@ -25,13 +25,23 @@ struct InlineThreshold {
 };
 
 constexpr InlineThreshold InlineThresholdFor(size_t worker_count) noexcept {
+    // 阈值按"并行的固定开销 vs 串行完成全部顶点变换的开销"确定，而不是按骨骼数的最小值。
+    //
+    // kInline 路径在调用线程上直接跑 task_func(0, 1)：不唤醒 worker、不派发任务、不自旋等待、
+    // 不建立 active scope。而任何并行模式都要付 BeginActiveScope（notify_all 唤醒全部 worker）、
+    // 任务发布与完成汇合的开销，量级在几十到几百微秒。串行 SIMD 变换的吞吐约几纳秒每顶点，
+    // 因此几百个 cube group（数千顶点）串行完成仍远低于一次唤醒派发的代价。
+    //
+    // 原来的 {4..6, 6..8} 让玩家模型（约 61 骨骼 / 46 cube group / 数百顶点）也走并行，
+    // 唤醒开销远超它省下的变换时间。这里把阈值提到能覆盖玩家模型这一量级，
+    // 只有真正重的模型（数百 cube group 以上）才值得走并行。
     if (worker_count == 2) {
-        return {4, 6};
+        return {64, 96};
     }
     if (worker_count < 7) {
-        return {6, 6};
+        return {128, 192};
     }
-    return {6, 8};
+    return {192, 256};
 }
 
 template <bool kCulling>
